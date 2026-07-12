@@ -1,0 +1,19 @@
+;start
+
+@msg `Hello from ATOM!\r\n`
+
+@print/str
+[
+    "dup
+    [
+        &load 0 eq not
+        [ 1 "add 1 ]
+        [ 0 ]
+        ifte
+    ] loop
+    "swap "sub
+]
+
+@start
+
+;msg ;print/str!
