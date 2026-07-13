@@ -1,0 +1,277 @@
+#!/usr/bin/env janet
+
+(def mite-peg (peg/compile ~{
+    :main (any (choice :ws :token))
+    :ws (some (choice :s (sequence "#" (any (if-not (set "\r\n") 1)))))
+    :id (some (if-not (set " \t\n\r[]!;{}`\"@><&#") 1))
+    :token (choice
+        :label
+        :anon-quote
+        :anon-string
+        :addrof
+        :eval
+        :bind
+        :fetch
+        :string
+        :number
+        :quote
+        :raw
+        :wide
+        :keep
+        :true
+        :false
+        :word)
+    :label       (replace (sequence "@" (capture :id)) ,(fn [n] [:label n]))
+    :anon-quote  (replace (sequence ";[" (group (any (choice :ws :token))) "]")
+                          ,(fn [children] [:anon-quote children]))
+    :anon-string (replace (sequence ";`" (capture (any (if-not "`" 1))) "`")
+                          ,(fn [s] [:anon-string s]))
+    :addrof      (replace (sequence ";" (capture :id)) ,(fn [n] [:addrof n]))
+    :bind        (replace (sequence ">" (capture :id)) ,(fn [n] [:bind n]))
+    :fetch       (replace (sequence "<" (capture :id)) ,(fn [n] [:fetch n]))
+    :eval        (replace "!" ,(fn [] [:builtin :eval]))
+    :true        (replace "t" ,(fn [] [:number 1]))
+    :false       (replace "f" ,(fn [] [:number 0]))
+
+    :string (replace (sequence "`" (capture (any (if-not "`" 1))) "`")
+                     ,(fn [s] [:string s]))
+    :number (replace (capture (some :d)) ,(fn [n] [:number (scan-number n)]))
+
+    :quote (replace (sequence "[" (group (any (choice :ws :token))) "]")
+                    ,(fn [children] [:quote children]))
+    :raw   (replace (sequence "{" (group (any (choice :ws :number))) "}")
+                    ,(fn [numbers] [:raw numbers]))
+    :wide  (replace (sequence "\"" :token) ,(fn [tok] [:wide tok]))
+    :keep  (replace (sequence "&" :token) ,(fn [tok] [:keep tok]))
+
+    :word  (replace (capture :id) ,(fn [w] [:builtin (keyword w)]))
+}))
+
+(def flag-wide 0x40)
+(def flag-keep 0x80)
+(def opcode-mask 0x3F)
+(def opcodes @{
+    :halt  0x00 :lit   0x01 :eval  0x02 :ret   0x03 :out   0x04
+    :in    0x05 :dup   0x06 :swap  0x07 :nip   0x08 :drop  0x09
+    :rot   0x0a :eq    0x0b :lt    0x0c :gt    0x0d :not   0x0e
+    :load  0x0f :poke  0x10 :add   0x11 :sub   0x12 :mult  0x13
+    :div   0x14 :mod   0x15 :ifte  0x16 :loop  0x17 :tol   0x18
+    :froml 0x19 :dropl 0x20 :xor   0x21 :neg   0x22 :dip   0x23
+    :keep  0x24
+})
+
+(defn unescape-string [s]
+    (string ;(peg/match 
+        ~(any (choice
+            (sequence "\\" "n" (constant "\n"))
+            (sequence "\\" "r" (constant "\r"))
+            (sequence "\\" "t" (constant "\t"))
+            (sequence "\\" "\\" (constant "\\"))
+            (sequence "\\" "\"" (constant "\""))
+            (capture 1)
+        )) s)
+    )
+)
+
+(def macro-extract-peg
+  (peg/compile 
+    ~(sequence "%def" (some :s) (capture (some :S)) (some :s) (capture (any 1)))))
+
+(def tokenize-peg
+  (peg/compile 
+    ~(any (capture (choice (some :w) (some :W))))))
+
+(defn preprocess [source-text]
+  (def defs @{})
+  (def output-lines @[])
+
+  (each line (string/split "\n" source-text)
+    (if (string/has-prefix? "%def" (string/triml line))
+      (if-let [[name body] (peg/match macro-extract-peg (string/triml line))]
+        (put defs name (string/trimr body)))
+      
+      (if (empty? defs)
+        (array/push output-lines line)
+        (let [chunks (peg/match tokenize-peg line)
+              processed-chunks (map (fn [chunk] (or (get defs chunk) chunk)) chunks)
+              processed-line (string/join processed-chunks)]
+          (array/push output-lines processed-line)))))
+
+  (string/join output-lines "\n"))
+
+(defn assemble [ast]
+    (def buf @"")
+    (def labl-table @{})
+    (def deferred @[]) 
+    (defn HERE [] (length buf))
+
+    (defn assemble-node [node &opt flags local-env]
+        (default local-env @[])
+        (default flags 0)
+        (defn find-local [env id]
+            (var found nil)
+            (for i 0 (length env) (if (= (get env i) id) (set found i)))
+            found
+        )
+
+        (match node
+        [:wide child] (assemble-node child (bor flags flag-wide) local-env)
+        [:keep child] (assemble-node child (bor flags flag-keep) local-env)
+
+        [:bind id]
+        (do
+            (buffer/push-byte buf (bor (opcodes :tol) flags))
+            (array/push local-env id)
+        )
+
+        [:fetch id]
+        (if-let [idx (find-local local-env id)]
+            (let [offset (- (length local-env) 1 idx)]
+                (buffer/push-byte buf (bor (opcodes :froml) flags))
+                (buffer/push-byte buf offset)
+                # (buffer/push-byte buf (bor (opcodes :lit) flags))
+            )
+            (errorf "undefined local: %s" id)
+        )
+
+        [:builtin builtin]
+        (let [opcode (opcodes builtin)]
+            (if (nil? opcode) (errorf "invalid builtin: %s" builtin))    
+            (buffer/push-byte buf (bor opcode flags))
+        )
+
+        [:number n] 
+        (if (not= 0 (band flags flag-wide))
+            (do (buffer/push-byte buf (bor (opcodes :lit) flags)) (buffer/push-uint16 buf :le n))
+            (do (buffer/push-byte buf (bor (opcodes :lit) flags)) (buffer/push-byte buf n))
+        )
+
+        [:label labl] (put labl-table labl (HERE))
+
+        [:addrof labl]
+        (let [addr (get labl-table labl)]
+            (if (nil? addr) (errorf "unbound label: %s" labl))    
+            (buffer/push-byte buf (bor (opcodes :lit) flag-wide))
+            (buffer/push-uint16 buf :le addr)
+        )
+
+        [:anon-quote children]
+        (do
+            (buffer/push-byte buf (bor (opcodes :lit) flag-wide))
+            (def slot (length buf))
+            (buffer/push-uint16 buf :le 0)
+            (array/push deferred {:type :quote :children children :slot slot :env (array/slice local-env) :flags flags})
+        )
+
+        [:anon-string str]
+        (do
+            (buffer/push-byte buf (bor (opcodes :lit) flag-wide))
+            (def slot (length buf))
+            (buffer/push-uint16 buf :le 0)
+            (array/push deferred {:type :string :str str :slot slot})
+        )
+
+        [:quote children] 
+        (do
+            (def local-top (length local-env))
+            (each child children 
+                (assemble-node child flags local-env))
+            
+            (def bound-count (- (length local-env) local-top))
+            # (repeat bound-count (buffer/push-byte buf (bor (opcodes :dropl) flags)))
+            (when (> bound-count 0)
+                (buffer/push-byte buf (bor (opcodes :dropl) flags))
+                (buffer/push-byte buf bound-count)
+            )
+            (buffer/push-byte buf (opcodes :ret))
+            (while (> (length local-env) local-top) (array/pop local-env))
+        )
+
+        [:string str] 
+        (do
+            (buffer/push-string buf (unescape-string str))
+            (buffer/push-byte buf 0))
+
+        [:raw nums] 
+        (each num nums 
+            (match num
+                [:number n] (assemble-node num flags local-env)
+                _ (errorf "raw buffer can contain only number literals, but %s was found" num)))
+
+        _ (errorf "Unknown node %s" node)
+        )
+    )
+
+    (match ast
+        [[:addrof start] & rest]
+        (do
+            (buffer/push-uint16 buf :le 0)
+            (each node rest (assemble-node node))
+            
+            (buffer/push-byte buf (opcodes :halt)) 
+            
+            (var idx 0)
+            (while (< idx (length deferred))
+                (def item (get deferred idx))
+                (set idx (+ idx 1))
+                
+                (def target-addr (HERE))
+                (let [lo (band target-addr 0xff)
+                      hi (band (brshift target-addr 8) 0xff)]
+                    (put buf (item :slot) lo)
+                    (put buf (+ (item :slot) 1) hi))
+                
+                (match (item :type)
+                    :string 
+                    (do
+                        (buffer/push-string buf (unescape-string (item :str)))
+                        (buffer/push-byte buf 0))
+                    :quote
+                    (do
+                        (def local-top (length (item :env)))
+                        (each child (item :children) 
+                            (assemble-node child (item :flags) (item :env)))
+                        (def bound-count (- (length (item :env)) local-top))
+                        # (repeat bound-count (buffer/push-byte buf (bor (opcodes :dropl) (item :flags))))
+                        (when (> bound-count 0)
+                            (buffer/push-byte buf (bor (opcodes :dropl) (item :flags)))
+                            (buffer/push-byte buf bound-count)
+                        )
+                        (buffer/push-byte buf (opcodes :ret))
+                    )
+                )
+            )
+
+            (let [addr (get labl-table start)]
+                (if (nil? addr) (errorf "unbound entry label: %s" start)) 
+                (put buf 0 (band addr 0xff))
+                (put buf 1 (band (brshift addr 8) 0xff))
+            )
+        )
+        _ (error "missing reset vector"))
+    buf
+)
+
+(defn emit-c-header []
+    (print "#ifndef MITE_OPCODES_H\n#define MITE_OPCODES_H\n")
+    (print "/* Modifier Flags */")
+    (printf "#define MITE_FLAG_WIDE 0x%02X" flag-wide)
+    (printf "#define MITE_FLAG_KEEP 0x%02X" flag-keep)
+    (printf "#define MITE_OPCODE_MASK 0x%02X\n" opcode-mask)
+    (print "/* Virtual Machine Opcodes */")
+    (def sorted-ops (sort (pairs opcodes) (fn [a b] (< (last a) (last b)))))
+    (each [name val] sorted-ops (printf "#define MITE_OP_%s 0x%02X" (string/ascii-upper name) val))
+    (print "\n#endif /* MITE_OPCODES_H */")
+)
+
+(defn main [& args]
+    (unless (> (length args) 1) (print "USAGE: mitec COMMAND") (os/exit 1))
+    (def cmd (array/slice args 1))
+    (match cmd
+        ["compile" path out] (if-let [c (slurp path)] (spit out (assemble (peg/match mite-peg (preprocess c)))))
+        ["compile" path]     (if-let [c (slurp path)] (spit "out.quark" (assemble (peg/match mite-peg (preprocess c)))))
+        ["header"]           (emit-c-header)
+        ["ast" path]         (if-let [c (slurp path)] (pp (peg/match mite-peg (preprocess c))))
+        ["pp" path]          (if-let [c (slurp path)] (pp (preprocess c)))
+    )
+)

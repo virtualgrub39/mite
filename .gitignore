@@ -1,2 +1,3 @@
-atom-opcodes.h
-*.quark
+mite-opcodes.h
+*.mbc
+mitei

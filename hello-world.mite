@@ -1,0 +1,22 @@
+;start # mandatory reset vector label
+
+# "dumb" macros: they work only with literals, will replace EVERYTHING (even inside strings)
+# etc. - they're even worse, than C macros, but they are here.
+%def CON 18
+
+@print/str # define new label
+[ # 'quoting' a "separated" piece of code, with some special rules
+    ;[ # read as "address of anonymous quoting" - we write this single-use quoting here, but it will be defined elsewhere, and replaced with "push address" opcode
+        &load # '&' is the "keep" flag - meaning "load" will load from address, but not consume it 
+        0 eq not
+        ;[ &load CON out "1 "add t ] # " is "wide" flag - meaning opcodes will work with 16-bit numbers
+        ;[ f ]
+        ifte
+    ] loop
+    "drop
+]
+
+@start # we're running starting from here
+
+;`Hello from ATOM!\r\n` # read as "push address of this anonymous string" - same as anonymous quoting - string is defined elsewhere, and this line is replaced with "push address" opcode
+;print/str! # read as "push address of print/str quoting and call it"

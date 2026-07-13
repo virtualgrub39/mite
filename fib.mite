@@ -1,0 +1,77 @@
+;start
+
+%def CON 18
+
+@fib
+[
+    dup 3 lt
+    ;[ drop 1 ]
+    ;[
+        >n
+        1 1
+        2
+        ;[
+            >i >B >A
+            <i <n lt
+            ;[
+                <B
+                <B <A add
+                <i 1 add t
+            ]
+            ;[ <B f ]
+            ifte
+        ] loop
+    ]
+    ifte
+]
+
+@print/str
+[
+    ;[
+        &load
+        0 eq not
+        ;[ &load CON out "1 "add t ]
+        ;[ f ]
+        ifte
+    ] loop
+    "drop
+]
+
+@buf { 0 0 0 0 0 }
+
+@print/byte
+[
+    2
+    ;[
+        >i
+        dup 10 mod 48 add
+        <i 0 ;buf "add poke
+
+        10 div
+        <i 0 eq not
+        ;[ <i 1 sub t]
+        ;[ drop f ]
+        ifte
+    ] loop
+
+    0 3 0 ;buf "add poke
+
+    ;buf 2
+    ;[
+        >n
+        <n 0 eq not
+        ;[
+            &load 48 eq
+            ;[ "1 "add <n 1 sub t ]
+            ;[ f ]
+            ifte
+        ]
+        ;[ f ]
+        ifte
+    ] loop
+
+    ;print/str!
+]
+
+@start
+12 ;fib! ;print/byte!
