@@ -77,27 +77,65 @@
   (peg/compile 
     ~(sequence "%def" (some :s) (capture (some :S)) (some :s) (capture (any 1)))))
 
+(def include-peg
+  (peg/compile ~(sequence "%include" (some :s) "\"" (capture (any (if-not "\"" 1))) "\"")))
+
 (def tokenize-peg
   (peg/compile 
     ~(any (capture (choice (some :w) (some :W))))))
 
-(defn preprocess [source-text]
-  (def defs @{})
-  (def output-lines @[])
+(defn preprocess [source-text &opt loaded-files current-dir]
+    (default loaded-files @{})
+    (default current-dir (os/cwd))
+    (def defs @{})
+    (def output-lines @[])
 
-  (each line (string/split "\n" source-text)
-    (if (string/has-prefix? "%def" (string/triml line))
-      (if-let [[name body] (peg/match macro-extract-peg (string/triml line))]
-        (put defs name (string/trimr body)))
-      
-      (if (empty? defs)
+    (each line (string/split "\n" source-text)
+        (def trimmed (string/triml line))
+
+        (cond
+
+        (string/has-prefix? "%include" trimmed)
+        (if-let [[file-path] (peg/match include-peg trimmed)]
+            (do (unless (get loaded-files file-path)
+                (put loaded-files file-path true)
+                (def resolved-path
+                    (if (string/has-prefix? "/" file-path)
+                        file-path
+                        (string current-dir "/" file-path))
+                )
+                (if-let [lib-source (slurp resolved-path)]
+                (do
+                    (def path-parts (string/split "/" resolved-path))
+                    (def include-dir (string/join (array/slice path-parts 0 (- (length path-parts) 1)) "/"))
+                    (def original-dir (os/cwd))
+                    (os/cd include-dir)
+                    (array/push output-lines (preprocess lib-source loaded-files include-dir))
+                    (os/cd original-dir))
+                (errorf "Could not read included file: %s" resolved-path))
+            ))
+            
+            (errorf "Malformed include directive: %s" line)
+        )
+
+        (string/has-prefix? "%def" trimmed)
+        (if-let [[name body] (peg/match macro-extract-peg trimmed)]
+            (put defs name (string/trimr body)))
+        
+        (empty? defs)
         (array/push output-lines line)
+        
+        :else
         (let [chunks (peg/match tokenize-peg line)
-              processed-chunks (map (fn [chunk] (or (get defs chunk) chunk)) chunks)
-              processed-line (string/join processed-chunks)]
-          (array/push output-lines processed-line)))))
+                processed-chunks (map (fn [chunk] (or (get defs chunk) chunk)) chunks)
+                processed-line (string/join processed-chunks)]
+            (array/push output-lines processed-line)
+        )
+        )
+    )
 
-  (string/join output-lines "\n"))
+    (string/join output-lines "\n")
+)
 
 (defn assemble [ast]
     (def buf @"")
@@ -264,14 +302,28 @@
     (print "\n#endif /* MITE_OPCODES_H */")
 )
 
+(defn file-dir [path]
+    (def path-parts (string/split "/" (os/realpath path)))
+    (string/join (array/slice path-parts 0 (- (length path-parts) 1)) "/")
+)
+
+(defn compile-mite [path &opt out-path]
+    (default out-path "out.quark")
+    (if-let [c (slurp path)]
+        (spit out-path (assemble (peg/match mite-peg (preprocess c nil (file-dir path)))))
+    )
+)
+
 (defn main [& args]
     (unless (> (length args) 1) (print "USAGE: mitec COMMAND") (os/exit 1))
     (def cmd (array/slice args 1))
     (match cmd
-        ["compile" path out] (if-let [c (slurp path)] (spit out (assemble (peg/match mite-peg (preprocess c)))))
-        ["compile" path]     (if-let [c (slurp path)] (spit "out.quark" (assemble (peg/match mite-peg (preprocess c)))))
+        ["compile" path out] (compile-mite path out)
+        ["compile" path]     (compile-mite path)
         ["header"]           (emit-c-header)
-        ["ast" path]         (if-let [c (slurp path)] (pp (peg/match mite-peg (preprocess c))))
-        ["pp" path]          (if-let [c (slurp path)] (pp (preprocess c)))
+        ["ast" path]         (if-let [c (slurp path)]
+            (pp (peg/match mite-peg (preprocess c nil (file-dir path)))))
+        ["pp" path]          (if-let [c (slurp path)]
+            (pp (preprocess c nil (file-dir path))))
     )
 )

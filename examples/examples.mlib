@@ -1,0 +1,66 @@
+%def CON 18
+
+@print/str
+[
+    ;[
+        &load
+        0 eq not
+        ;[ &load CON out "1 "add t ]
+        ;[ f ]
+        ifte
+    ] loop
+    "drop
+]
+
+@buf { 0 0 0 0 0 }
+
+@print/byte
+[
+    2
+    ;[
+        >i
+        dup 10 mod 48 add
+        <i 0 ;buf "add poke
+
+        10 div
+        <i 0 eq not
+        ;[ <i 1 sub t]
+        ;[ drop f ]
+        ifte
+    ] loop
+
+    0 3 0 ;buf "add poke
+
+    ;buf 2
+    ;[
+        >n
+        <n 0 eq not
+        ;[
+            &load 48 eq
+            ;[ "1 "add <n 1 sub t ]
+            ;[ f ]
+            ifte
+        ]
+        ;[ f ]
+        ifte
+    ] loop
+
+    ;print/str!
+]
+
+@while
+[
+    # ( "cond "body )
+    >body_h >body_l
+    >cond_h >cond_l
+
+    ;[
+        <cond_l <cond_h !
+        ;[
+            <body_l <body_h !
+            t
+        ]
+        ;[ f ]
+        ifte
+    ] loop
+]
