@@ -1,5 +1,48 @@
 %def CON 18
 
+@str/len
+[
+    ">ptr
+    0
+    ;[ 
+        >i
+        "<ptr <i 0 "add load    
+
+        0 eq
+        ;[ <i f ]
+        ;[ <i 1 add t ]
+        ifte
+    ]
+    loop
+]
+
+@str/to-byte
+[
+    ">ptr          
+    0 0             
+    
+    ;[
+        >index   
+        >acc   
+        
+        "<ptr <index 0 "add load >c
+        
+        <c 0 eq
+        ;[
+            <acc 
+            f   
+        ]
+        ;[
+            <acc 10 mult
+            <c '0' sub
+            add
+            <index 1 add
+            t    
+        ]
+        ifte
+    ] loop
+]
+
 @print/str
 [
     ;[

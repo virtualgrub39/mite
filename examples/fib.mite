@@ -25,6 +25,11 @@
     ifte
 ]
 
+@num-buffer { 0x00*6 }
+
 @start
 # unicode just kindof works it seems
-;`斐波那契数列：` ;print/str! 24 ;fib! ;print/word! ;`\r\n` ;print/str!
+;`请输入一个数字： ` ;print/str! 
+;num-buffer 5 ;read/line! drop 
+;num-buffer ;str/to-byte!
+;`斐波那契数列：` ;print/str! ;fib! ;print/word! ;`\r\n` ;print/str!

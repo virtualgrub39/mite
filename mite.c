@@ -354,6 +354,13 @@ mite_run (MiteVM *vm)
         }
         break;
 
+        case MITE_OP_MULT:
+        {
+            mite_pop2(vm, wide, keep, &a, &b);
+            mite_push1(vm, wide, a * b);
+        }
+        break;
+
         case MITE_OP_SWAP:
         {
             mite_pop2(vm, wide, keep, &a, &b);
