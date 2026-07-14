@@ -29,7 +29,7 @@
 
 @start
 # unicode just kindof works it seems
-;`请输入一个数字： ` ;print/str! 
+;`请输入一个数字：` ;print/str! 
 ;num-buffer 5 ;read/line! drop 
 ;num-buffer ;str/to-byte!
 ;`斐波那契数列：` ;print/str! ;fib! ;print/word! ;`\r\n` ;print/str!

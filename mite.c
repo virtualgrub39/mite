@@ -25,7 +25,7 @@ typedef struct
 
 typedef struct mite_vm
 {
-    uint8_t mem [(1<<16)-1];
+    uint8_t mem [1<<16];
     uint16_t ip;
 
     uint8_t stack [255];
