@@ -12,7 +12,7 @@
     "drop
 ]
 
-@buf { 0 0 0 0 0 0 }
+@buf { 0x00 * 6 }
 
 @print/byte
 [
@@ -54,6 +54,39 @@
     ] loop
 
     0 ;buf "add ;print/str!
+]
+
+@read/line
+[
+    # ( "ptr max-n -- n )
+    >N ">ptr
+
+    0
+    ;[
+        >i
+        
+        CON in
+
+        dup '\n' eq
+        ;[
+            drop
+            0x00 "<ptr <i 0 "add poke
+            <i
+            f
+        ]
+        ;[
+            <i <N lt
+            ;[
+                "<ptr <i 0 "add poke
+                <i 1 add
+            ]
+            ;[ 0x08 CON out 0x07 CON out ]
+            ifte
+            
+            t
+        ]
+        ifte
+    ] loop
 ]
 
 @while

@@ -1,11 +1,27 @@
 #!/usr/bin/env janet
 
+(defn parse-char-literal [raw-char]
+  (if (= (length raw-char) 1)
+    (raw-char 0)
+    (case raw-char
+      "\\n" 10
+      "\\r" 13
+      "\\t" 9
+      "\\'" 39
+      "\\\"" 34
+      "\\\\" 92
+      "\\0" 0
+      (if (string/has-prefix? "\\x" raw-char)
+        (scan-number (string "0" (string/slice raw-char 1)))
+        (error (string "Unknown character escape sequence: " raw-char))))))
+
 (def mite-peg (peg/compile ~{
     :main (any (choice :ws :token))
     :ws (some (choice :s (sequence "#" (any (if-not (set "\r\n") 1)))))
     :id (some (if-not (set " \t\n\r[]!;{}`\"@><&#") 1))
     :token (choice
         :label
+        :number
         :anon-quote
         :anon-string
         :addrof
@@ -13,7 +29,6 @@
         :bind
         :fetch
         :string
-        :number
         :quote
         :raw
         :wide
@@ -35,12 +50,40 @@
 
     :string (replace (sequence "`" (capture (any (if-not "`" 1))) "`")
                      ,(fn [s] [:string s]))
-    :number (replace (capture (some :d)) ,(fn [n] [:number (scan-number n)]))
+
+    :num-hex (sequence (opt (set "+-")) "0" (set "xX") (some :h))
+    :num-bin (sequence (opt (set "+-")) (choice "0b" "0B") (some (set "01")))
+    :num-oct (sequence (opt (set "+-")) (choice "0o" "0O") (some (range "07")))
+    :num-dec (sequence (opt (set "+-")) (some :d))
+    :number-literal (choice :num-hex :num-bin :num-oct :num-dec)
+
+    :char-escape (sequence "\\" (choice (set "nrt'\"\\0") (sequence "x" :h :h)))
+    :char-normal (if-not (set "'\\") 1)
+    :char-literal (sequence "'" (capture (choice :char-escape :char-normal)) "'")
+
+    :num-val (replace (capture :number-literal) ,scan-number)
+    :char-val (replace :char-literal ,parse-char-literal)
+
+    :val-literal (choice :num-val :char-val)
+
+    :number (replace :val-literal ,(fn [val] [:number val]))
 
     :quote (replace (sequence "[" (group (any (choice :ws :token))) "]")
                     ,(fn [children] [:quote children]))
-    :raw   (replace (sequence "{" (group (any (choice :ws :number))) "}")
-                    ,(fn [numbers] [:raw numbers]))
+
+    :raw-repeat (replace (sequence :val-literal (any :ws) "*" (any :ws) :val-literal)
+                         ,(fn [val cnt] [:repeat val cnt]))
+                         
+    :raw-single (replace :val-literal 
+                         ,(fn [val] [:single val]))
+                         
+    :raw-file (replace (sequence "`" (capture (any (if-not "`" 1))) "`")
+                       ,(fn [path] [:file path]))
+                       
+    :raw-item (choice :raw-repeat :raw-single :raw-file)
+    
+    :raw (replace (sequence "{" (group (any (choice :ws :raw-item))) "}")
+                  ,(fn [items] [:raw items]))
     :wide  (replace (sequence "\"" :token) ,(fn [tok] [:wide tok]))
     :keep  (replace (sequence "&" :token) ,(fn [tok] [:keep tok]))
 
@@ -57,7 +100,7 @@
     :load  0x0f :poke  0x10 :add   0x11 :sub   0x12 :mult  0x13
     :div   0x14 :mod   0x15 :ifte  0x16 :loop  0x17 :tol   0x18
     :froml 0x19 :dropl 0x20 :xor   0x21 :neg   0x22 :dip   0x23
-    :keep  0x24 :over  0x25
+    :keep  0x24 :over  0x25 :here  0x26
 })
 
 (defn unescape-string [s]
@@ -78,7 +121,7 @@
     ~(sequence "%def" (some :s) (capture (some :S)) (some :s) (capture (any 1)))))
 
 (def include-peg
-  (peg/compile ~(sequence "%include" (some :s) "\"" (capture (any (if-not "\"" 1))) "\"")))
+  (peg/compile ~(sequence "%include" (some :s) "`" (capture (any (if-not "`" 1))) "`")))
 
 (def tokenize-peg
   (peg/compile 
@@ -245,11 +288,22 @@
             (buffer/push-string buf (unescape-string str))
             (buffer/push-byte buf 0))
 
-        [:raw nums] 
-        (each num nums 
-            (match num
-                [:number n] (assemble-node num flags local-env)
-                _ (errorf "raw buffer can contain only number literals, but %s was found" num)))
+        [:raw items] 
+        (each item items 
+            (match item
+                [:single n] 
+                (buffer/push-byte buf n)
+                
+                [:repeat val cnt] 
+                (loop [_ :range [0 cnt]] 
+                    (buffer/push-byte buf val))
+                    
+                [:file path]
+                (if-let [data (slurp path)]
+                    (buffer/push-string buf data)
+                    (errorf "Could not read binary file: %s" path))
+                    
+                _ (errorf "Raw buffer can only contain numbers, repeats, or file paths, but got: %s" item)))
 
         _ (errorf "Unknown node %s" node)
         )

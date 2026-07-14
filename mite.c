@@ -38,7 +38,7 @@ typedef struct mite_vm
     uint8_t rtop;
 
     void (*port_out) (uint8_t port, uint8_t arg);
-    void (*port_in) (uint8_t port);
+    uint8_t (*port_in) (uint8_t port);
 } MiteVM;
 
 uint8_t
@@ -141,10 +141,19 @@ void mite_run (MiteVM *vm);
 void
 port_out (uint8_t port, uint8_t arg)
 {
-    // printf ("OUT(%hhu): 0x%02X\n", port, arg);
     switch (port)
     {
     case 18: putc ((int)arg, stdout); fflush (stdout); break;
+    }
+}
+
+uint8_t
+port_in (uint8_t port)
+{
+    switch (port)
+    {
+    case 18: return (uint8_t)getchar();
+    default: return 0;
     }
 }
 
@@ -169,6 +178,7 @@ main (int argc, char *argv[])
     fclose (fp);
 
     vm->port_out = port_out;
+    vm->port_in = port_in;
 
     mite_run (vm);
     mite_deinit (vm);
@@ -270,6 +280,12 @@ mite_run (MiteVM *vm)
             uint8_t port = mite_pop1(vm, false, false); 
             uint8_t arg  = mite_pop1(vm, false, keep);  
             vm->port_out(port, arg);
+            break;
+        }
+
+        case MITE_OP_IN: {
+            uint8_t port = mite_pop1(vm, false, false); 
+            mite_push1(vm, false, vm->port_in(port));
             break;
         }
 
@@ -417,6 +433,10 @@ mite_run (MiteVM *vm)
             vm->ip = target;
         }
         break;
+
+        case MITE_OP_HERE:
+            mite_push1(vm, true, vm->ip);
+            break;
 
         default:
             fprintf (stderr, "Opcode 0x%02X not implemented\n", opcode); 

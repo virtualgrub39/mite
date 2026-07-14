@@ -1,0 +1,17 @@
+;start
+
+%include `examples.mlib`
+
+%def BUFSZ 8
+@buffer { 0 * BUFSZ }
+
+@start
+
+;[ 
+    ;`Enter Your name: ` ;print/str! 
+    ;buffer BUFSZ 1 sub ;read/line! not 
+] loop
+
+;`Hello, ` ;print/str!
+;buffer    ;print/str!
+;`!\r\n`   ;print/str!

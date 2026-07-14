@@ -1,6 +1,6 @@
 ;start
 
-%include "examples.mlib"
+%include `examples.mlib`
 
 @fib # ( n -- "fib(n) )
 [
@@ -26,4 +26,5 @@
 ]
 
 @start
-24 ;fib! ;print/word! ;`\r\n` ;print/str!
+# unicode just kindof works it seems
+;`斐波那契数列：` ;print/str! 24 ;fib! ;print/word! ;`\r\n` ;print/str!

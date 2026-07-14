@@ -18,5 +18,5 @@
 
 @start # we're running starting from here
 
-;`Hello from ATOM!\r\n` # read as "push address of this anonymous string" - same as anonymous quoting - string is defined elsewhere, and this line is replaced with "push address" opcode
+;`Hello from MITE!\r\n` # read as "push address of this anonymous string" - same as anonymous quoting - string is defined elsewhere, and this line is replaced with "push address" opcode
 ;print/str! # read as "push address of print/str quoting and call it"
