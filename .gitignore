@@ -1,3 +1,4 @@
 mite-opcodes.h
 *.mbc
 mite
+.vscode

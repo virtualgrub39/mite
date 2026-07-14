@@ -57,7 +57,7 @@
     :load  0x0f :poke  0x10 :add   0x11 :sub   0x12 :mult  0x13
     :div   0x14 :mod   0x15 :ifte  0x16 :loop  0x17 :tol   0x18
     :froml 0x19 :dropl 0x20 :xor   0x21 :neg   0x22 :dip   0x23
-    :keep  0x24
+    :keep  0x24 :over  0x25
 })
 
 (defn unescape-string [s]
@@ -143,14 +143,25 @@
     (def deferred @[]) 
     (defn HERE [] (length buf))
 
+    (defn find-local [env id]
+        (var found nil)
+        (for i 0 (length env) (if (= ((get env i) :id) id) (set found i)))
+        found
+    )
+    (defn bytes-above [env idx]
+        (var sum 0)
+        (for i (+ idx 1) (length env) (set sum (+ sum ((get env i) :width))))
+        sum
+    )
+    (defn scope-byte-width [env from]
+        (var sum 0)
+        (for i from (length env) (set sum (+ sum ((get env i) :width))))
+        sum
+    )
+
     (defn assemble-node [node &opt flags local-env]
         (default local-env @[])
         (default flags 0)
-        (defn find-local [env id]
-            (var found nil)
-            (for i 0 (length env) (if (= (get env i) id) (set found i)))
-            found
-        )
 
         (match node
         [:wide child] (assemble-node child (bor flags flag-wide) local-env)
@@ -158,16 +169,21 @@
 
         [:bind id]
         (do
+            (def width (if (not= 0 (band flags flag-wide)) 2 1))
             (buffer/push-byte buf (bor (opcodes :tol) flags))
-            (array/push local-env id)
+            (array/push local-env {:id id :width width})
         )
 
         [:fetch id]
         (if-let [idx (find-local local-env id)]
-            (let [offset (- (length local-env) 1 idx)]
+            (let [entry (get local-env idx)
+                  wants-wide (not= 0 (band flags flag-wide))
+                  is-wide (= (entry :width) 2)]
+                (unless (= wants-wide is-wide)
+                    (errorf "local '%s' was bound as %s but fetched as %s"
+                            id (if is-wide "wide" "narrow") (if wants-wide "wide" "narrow")))
                 (buffer/push-byte buf (bor (opcodes :froml) flags))
-                (buffer/push-byte buf offset)
-                # (buffer/push-byte buf (bor (opcodes :lit) flags))
+                (buffer/push-byte buf (bytes-above local-env idx))
             )
             (errorf "undefined local: %s" id)
         )
@@ -215,11 +231,10 @@
             (each child children 
                 (assemble-node child flags local-env))
             
-            (def bound-count (- (length local-env) local-top))
-            # (repeat bound-count (buffer/push-byte buf (bor (opcodes :dropl) flags)))
-            (when (> bound-count 0)
+            (def bound-bytes (scope-byte-width local-env local-top))
+            (when (> bound-bytes 0)
                 (buffer/push-byte buf (bor (opcodes :dropl) flags))
-                (buffer/push-byte buf bound-count)
+                (buffer/push-byte buf bound-bytes)
             )
             (buffer/push-byte buf (opcodes :ret))
             (while (> (length local-env) local-top) (array/pop local-env))
@@ -269,11 +284,10 @@
                         (def local-top (length (item :env)))
                         (each child (item :children) 
                             (assemble-node child (item :flags) (item :env)))
-                        (def bound-count (- (length (item :env)) local-top))
-                        # (repeat bound-count (buffer/push-byte buf (bor (opcodes :dropl) (item :flags))))
-                        (when (> bound-count 0)
+                        (def bound-bytes (scope-byte-width (item :env) local-top))
+                        (when (> bound-bytes 0)
                             (buffer/push-byte buf (bor (opcodes :dropl) (item :flags)))
-                            (buffer/push-byte buf bound-count)
+                            (buffer/push-byte buf bound-bytes)
                         )
                         (buffer/push-byte buf (opcodes :ret))
                     )
@@ -308,7 +322,7 @@
 )
 
 (defn compile-mite [path &opt out-path]
-    (default out-path "out.quark")
+    (default out-path "out.mbc")
     (if-let [c (slurp path)]
         (spit out-path (assemble (peg/match mite-peg (preprocess c nil (file-dir path)))))
     )

@@ -2,23 +2,23 @@
 
 %include "examples.mlib"
 
-@fib
+@fib # ( n -- "fib(n) )
 [
     dup 3 lt
     ;[ drop 1 ]
     ;[
         >n
-        1 1
+        "1 "1
         2
         ;[
-            >i >B >A
+            >i ">B ">A
             <i <n lt
             ;[
-                <B
-                <B <A add
+                "<B
+                "<B "<A "add
                 <i 1 add t
             ]
-            ;[ <B f ]
+            ;[ "<B f ]
             ifte
         ] loop
     ]
@@ -26,4 +26,4 @@
 ]
 
 @start
-12 ;fib! ;print/byte! ;`\r\n` ;print/str!
+24 ;fib! ;print/word! ;`\r\n` ;print/str!

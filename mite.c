@@ -7,10 +7,20 @@
 
 #include "mite-opcodes.h"
 
+typedef enum {
+    FRAME_CALL,
+    FRAME_LOOP,
+    FRAME_DIP,
+    FRAME_KEEP
+} MiteFrameType;
+
 typedef struct 
 {
     uint16_t return_ip;
     uint16_t loop_ip;
+    uint16_t saved_val;  
+    uint8_t type;        
+    bool wide;           
 } MiteFrame;
 
 typedef struct mite_vm
@@ -89,9 +99,15 @@ mite_push1 (MiteVM *vm, bool wide, uint16_t val)
 }
 
 static void
-mite_rpush (MiteVM *vm, uint16_t return_ip, uint16_t loop_ip)
+mite_rpush (MiteVM *vm, uint16_t return_ip, uint16_t loop_ip, uint8_t type, uint16_t saved_val, bool wide)
 {
-    vm->rstack[vm->rtop++] = (MiteFrame){ return_ip, loop_ip };
+    vm->rstack[vm->rtop++] = (MiteFrame) {
+        return_ip,
+        loop_ip,
+        saved_val,
+        type,
+        wide
+    };
 }
 
 MiteVM *
@@ -199,25 +215,25 @@ mite_run (MiteVM *vm)
             if (vm->rtop == 0) return;
             MiteFrame *f = &vm->rstack[vm->rtop - 1];
 
-            if (f->loop_ip) {
-                uint8_t cond = (uint8_t)mite_pop1(vm, false, false); // loops look for 8-bit condition
+            if (f->type == FRAME_LOOP) {
+                uint8_t cond = (uint8_t)mite_pop1(vm, false, false); 
                 if (cond) {
                     vm->ip = f->loop_ip;
-                } else {
-                    vm->ip = f->return_ip;
-                    vm->rtop -= 1;
+                    break;
                 }
-            } else {
-                vm->ip = f->return_ip;
-                vm->rtop -= 1;
-            }
+            } 
+            else if (f->type == FRAME_DIP || f->type == FRAME_KEEP)
+                mite_push1(vm, f->wide, f->saved_val);
+
+            vm->ip = f->return_ip;
+            vm->rtop -= 1;
         }
         break;
 
         case MITE_OP_EVAL:
         {
             uint16_t target = mite_pop1(vm, true, keep);
-            mite_rpush(vm, vm->ip, 0);
+            mite_rpush(vm, vm->ip, 0, FRAME_CALL, 0, false);
             vm->ip = target;
         }
         break;
@@ -229,7 +245,7 @@ mite_run (MiteVM *vm)
             uint8_t cond = (uint8_t)mite_pop1(vm, false, keep);
             
             uint16_t target = cond ? then_br : else_br;
-            mite_rpush(vm, vm->ip, 0);
+            mite_rpush(vm, vm->ip, 0, FRAME_CALL, 0, false);
             vm->ip = target;
         }
         break;
@@ -237,7 +253,7 @@ mite_run (MiteVM *vm)
         case MITE_OP_LOOP:
         {
             uint16_t body = mite_pop1(vm, true, false);
-            mite_rpush(vm, vm->ip, body);
+            mite_rpush(vm, vm->ip, body, FRAME_LOOP, 0, false);
             vm->ip = body;
         }
         break;
@@ -330,8 +346,15 @@ mite_run (MiteVM *vm)
         }
         break;
 
+        case MITE_OP_OVER:
+        {
+            mite_pop2(vm, wide, true, &a, &b);
+            mite_push1(vm, wide, b);
+        }
+        break;
+
         case MITE_OP_NOT:
-            mite_push1(vm, false, !mite_pop1(vm, wide, keep));
+            mite_push1(vm, wide, !mite_pop1(vm, wide, keep));
             break;
 
         case MITE_OP_NEG:
@@ -348,16 +371,53 @@ mite_run (MiteVM *vm)
             break;
 
         case MITE_OP_TOL:
-            mite_local_push (vm, mite_pop1(vm, false, keep)); // TODO: wide?
+            if (wide) {
+                uint16_t val = mite_pop1(vm, true, keep);
+                mite_local_push(vm, val & 0xff);          // lo
+                mite_local_push(vm, (val >> 8) & 0xff);   // hi
+            } else {
+                mite_local_push(vm, mite_pop1(vm, false, keep));
+            }
             break;
-        
+
         case MITE_OP_FROML:
-            mite_push1 (vm, false, mite_local_pick (vm, read_u8 (vm))); // TODO: wide?
-            break;
+        {
+            uint8_t offset = read_u8(vm);
+            if (wide) {
+                uint8_t hi = mite_local_pick(vm, offset);
+                uint8_t lo = mite_local_pick(vm, offset + 1);
+                mite_push1(vm, true, (uint16_t)lo | ((uint16_t)hi << 8));
+            } else {
+                mite_push1(vm, false, mite_local_pick(vm, offset));
+            }
+        }
+        break;
+        
         case MITE_OP_DROPL:
             vm->ltop -= read_u8 (vm);
             break;
         
+        case MITE_OP_DIP:
+        {
+            uint16_t target = mite_pop1(vm, true, false);
+            uint16_t val    = mite_pop1(vm, wide, keep); // TODO: does keep make any sense here?
+            mite_rpush(vm, vm->ip, 0, FRAME_DIP, val, wide);
+            vm->ip = target;
+        }
+        break;
+
+        case MITE_OP_KEEP:
+        {
+            uint16_t target = mite_pop1(vm, true, false);
+            uint16_t val    = mite_pop1(vm, wide, keep); // TODO: does keep make any sense here?
+            
+            mite_push1 (vm, wide, val);
+
+            mite_rpush(vm, vm->ip, 0, FRAME_KEEP, val, wide);
+            vm->ip = target;
+        }
+        break;
+
         default:
             fprintf (stderr, "Opcode 0x%02X not implemented\n", opcode); 
             return;

@@ -12,52 +12,59 @@
     "drop
 ]
 
-@buf { 0 0 0 0 0 }
+@buf { 0 0 0 0 0 0 }
 
 @print/byte
 [
+    0 "3 ;buf "add poke # NULL terminator - to be safe
+
     2
     ;[
         >i
         dup 10 mod 48 add
+        <i 0 ;buf "add poke   # Write ASCII char to buf[i]
+
+        10 div                # Get the next quotient
+        dup 0 eq
+        ;[ drop <i f ]        # If quotient is 0: drop it, leave final index 'i', and exit
+        ;[ <i 1 sub t ]       # Otherwise: decrement index and keep looping
+        ifte
+    ] loop
+
+    # ( start-idx -- )
+
+    0 ;buf "add ;print/str!   # print/str(buf + start-idx) # some raw-pointer math
+]
+
+@print/word
+[
+    0 "5 ;buf "add poke
+
+    4
+    ;[
+        >i
+        "dup "10 "mod drop 48 add
         <i 0 ;buf "add poke
 
-        10 div
-        <i 0 eq not
-        ;[ <i 1 sub t]
-        ;[ drop f ]
+        "10 "div
+        "dup "0 "eq
+        ;[ drop <i f ]
+        ;[ <i 1 sub t ]
         ifte
     ] loop
 
-    0 3 0 ;buf "add poke
-
-    ;buf 2
-    ;[
-        >n
-        <n 0 eq not
-        ;[
-            &load 48 eq
-            ;[ "1 "add <n 1 sub t ]
-            ;[ f ]
-            ifte
-        ]
-        ;[ f ]
-        ifte
-    ] loop
-
-    ;print/str!
+    0 ;buf "add ;print/str!
 ]
 
 @while
 [
     # ( "cond "body )
-    >body_h >body_l
-    >cond_h >cond_l
+    ">body ">cond
 
     ;[
-        <cond_l <cond_h !
+        "<cond!
         ;[
-            <body_l <body_h !
+            "<body!
             t
         ]
         ;[ f ]
