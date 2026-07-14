@@ -326,6 +326,13 @@ mite_run (MiteVM *vm)
         }
         break;
 
+        case MITE_OP_GT:
+        {
+            mite_pop2(vm, wide, keep, &a, &b);
+            mite_push1(vm, false, a > b);
+        }
+        break;
+
         case MITE_OP_ADD:
         {
             mite_pop2(vm, wide, keep, &a, &b);

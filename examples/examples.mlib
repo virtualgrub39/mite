@@ -43,6 +43,30 @@
     ] loop
 ]
 
+@str/reverse # ( "ptr -- )
+[
+    &">ptr
+    ;str/len! 1 sub &>last
+    2 div >half
+
+    0
+    ;[ >i
+        <last <i sub &>back         # ( last-i ) 
+        0 "<ptr "add load           # ( ptr[last-i] )
+        "<ptr <i 0 "add &load >t    # ( ptr[last-i] ptr+i )
+        poke                        # assign
+        <t                          # ( ptr[i] )
+        <back 0 "<ptr "add          # ( ptr[i] ptr+last-i )
+        poke                        # assign
+        # I love debugging concatenative code :3
+
+        <i <half lt
+        ;[ <i 1 add t ]
+        ;[ f ]
+        ifte
+    ] loop # while i < half
+]
+
 @print/str
 [
     ;[
