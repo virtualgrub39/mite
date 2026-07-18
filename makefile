@@ -12,7 +12,7 @@ CFLAGS += -Wall -Wextra
 
 all: mite
 
-mite-opcodes.h:
+mite-opcodes.h: mitec
 	./mitec header > mite-opcodes.h
 
 mite: $(SRC) | mite-opcodes.h
